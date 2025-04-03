@@ -1,0 +1,16 @@
+{
+    "name": "picazin",
+    "description": "picazin rules",
+    "rules": [
+        {
+            "id": "AW0006",
+            "action": "Hidden",
+            "justification": "No need all objects to be searchable."
+        },
+        {
+            "id": "AA0072",
+            "action": "Hidden",
+            "justification": "WTF?!?!"
+        }
+    ]
+}
