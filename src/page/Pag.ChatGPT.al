@@ -17,7 +17,8 @@ page 83256 "Chat GPT"
                 Caption = 'Ask Question to Chat GPT';
                 trigger OnValidate()
                 begin
-                    APIKEY:='AIzaSyAdcuJIHye2UiysD7cJ5EQuqo-iAkoRVuo';
+                    //removed the API key
+                    APIKEY:='xxx';
                     if MessageToSend <> '' then begin
                         ChatGPTIntegrationwithBC.InsertResponse('Me: ' + MessageToSend);
                         Commit();
