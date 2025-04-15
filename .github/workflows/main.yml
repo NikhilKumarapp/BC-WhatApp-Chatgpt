@@ -1,4 +1,4 @@
-name: Create Release
+name: Business Central Release
 
 on:
   push:
@@ -7,112 +7,127 @@ on:
   workflow_dispatch:
     inputs:
       appVersion:
-        description: 'App Version'
+        description: 'App Version (e.g., 1.0.0)'
         required: true
       tag:
-        description: 'Tag'
+        description: 'Custom Tag (optional)'
         required: false
       releaseNotes:
-        description: 'Release Notes'
+        description: 'Release Notes (optional)'
         required: false
 
+env:
+  APP_FILE: 'AppSource/**/app.json'
+
 jobs:
-  create-release:
+  validate-and-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Required to fetch all history for tags
+          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup AL Environment
+        uses: microsoft/AL-Go-Actions/setup@v1
         with:
-          node-version: '16'
+          version: 'latest'
 
-      - name: Read version from App.json
-        id: read_version
+      - name: Validate App.json
+        id: validate_app
         run: |
-          # Verify App.json exists
-          if [ ! -f "AppSource/**/App.json" ]; then
-            echo "::error::App.json file not found!"
+          if [ ! -f "$APP_FILE" ]; then
+            echo "::error::App.json file not found at $APP_FILE"
             exit 1
           fi
           
-          version=$(jq -r '.version' AppSource/**/App.json | head -n 1)
+          echo "App.json content:"
+          cat $APP_FILE
+          
+          version=$(jq -r '.version' $APP_FILE)
           if [ -z "$version" ]; then
             echo "::error::Could not read version from App.json"
             exit 1
           fi
+          
           echo "APP_VERSION=$version" >> $GITHUB_ENV
-          echo "Version read successfully: $version"
+          echo "Using version: $version"
 
-      - name: Set release inputs
-        id: set_inputs
+      - name: Set Release Parameters
+        id: set_params
         run: |
           # Use input version or fallback to App.json version
           APP_VERSION="${{ github.event.inputs.appVersion || env.APP_VERSION }}"
-          echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
+          
+          # Validate version format (SemVer)
+          if [[ ! $APP_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format. Use Semantic Versioning (e.g., 1.0.0)"
+            exit 1
+          fi
+          
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
           
           # Generate tag name
           if [[ -z "${{ github.event.inputs.tag }}" ]]; then
-            RELEASE_TAG="v${APP_VERSION}-${{ github.run_number }}"
+            RELEASE_TAG="v$APP_VERSION"
           else
             RELEASE_TAG="${{ github.event.inputs.tag }}"
           fi
-          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
           
           # Set release notes
-          RELEASE_NOTES="${{ github.event.inputs.releaseNotes || 'Auto-generated release.' }}"
-          echo "RELEASE_NOTES=${RELEASE_NOTES}" >> $GITHUB_ENV
+          RELEASE_NOTES="${{ github.event.inputs.releaseNotes || 'Business Central App Release' }}"
+          echo "RELEASE_NOTES=$RELEASE_NOTES" >> $GITHUB_ENV
           
-          echo "Using tag: ${RELEASE_TAG}"
-          echo "Release notes: ${RELEASE_NOTES}"
+          echo "Release parameters set:"
+          echo "Version: $APP_VERSION"
+          echo "Tag: $RELEASE_TAG"
+          echo "Notes: $RELEASE_NOTES"
 
-      - name: Verify GitHub Token
+      - name: Clean Previous Release
         run: |
-          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
-            echo "::error::GITHUB_TOKEN is not available"
-            exit 1
-          fi
-          echo "GitHub token is available (first 4 chars: ${GITHUB_TOKEN:0:4}...)"
-
-      - name: Delete existing tag (if any)
-        run: |
-          # Check if tag exists remotely
-          if git ls-remote --exit-code --tags origin "refs/tags/${{ env.RELEASE_TAG }}" >/dev/null 2>&1; then
-            echo "Tag ${{ env.RELEASE_TAG }} exists, deleting..."
-            git tag -d "${{ env.RELEASE_TAG }}" || true
+          # Delete local tag if exists
+          git tag -d "${{ env.RELEASE_TAG }}" 2>/dev/null || true
+          
+          # Delete remote tag if exists
+          if git ls-remote --tags origin "${{ env.RELEASE_TAG }}" | grep -q "${{ env.RELEASE_TAG }}"; then
+            echo "Deleting existing tag ${{ env.RELEASE_TAG }}..."
             git push origin ":refs/tags/${{ env.RELEASE_TAG }}" || \
-              echo "::warning::Failed to delete remote tag (might not exist)"
+              echo "::warning::Failed to delete remote tag (may not exist)"
           else
-            echo "Tag ${{ env.RELEASE_TAG }} does not exist, nothing to delete"
+            echo "Tag ${{ env.RELEASE_TAG }} doesn't exist yet"
           fi
 
-      - name: Debug outputs
+      - name: Build AL App
         run: |
-          echo "APP_VERSION: ${{ env.APP_VERSION }}"
-          echo "RELEASE_TAG: ${{ env.RELEASE_TAG }}"
-          echo "RELEASE_NOTES: ${{ env.RELEASE_NOTES }}"
-          echo "GITHUB_REF: $GITHUB_REF"
-          echo "GITHUB_SHA: $GITHUB_SHA"
+          echo "Building AL application..."
+          alc /project:${{ github.workspace }} /packagecachepath:${{ github.workspace }}/.alpackages
 
-      - name: Create Release
+      - name: Create GitHub Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Release ${{ env.APP_VERSION }}
+          release_name: "Version ${{ env.APP_VERSION }}"
           body: ${{ env.RELEASE_NOTES }}
           draft: false
           prerelease: false
-          generate_release_notes: false
-          fail_on_unmatched_files: false
+
+      - name: Upload App Package
+        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/**/*.app
+          asset_name: "BusinessCentralApp_${{ env.APP_VERSION }}.app"
+          asset_content_type: application/octet-stream
 
-      - name: Verify release creation
-        if: steps.create_release.outputs.result != 'success'
+      - name: Verify Release
         run: |
-          echo "::error::Release creation failed!"
-          exit 1
+          echo "Release created successfully:"
+          echo "Version: ${{ env.APP_VERSION }}"
+          echo "Tag: ${{ env.RELEASE_TAG }}"
+          echo "Release URL: ${{ steps.create_release.outputs.html_url }}"
