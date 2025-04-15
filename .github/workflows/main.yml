@@ -23,27 +23,41 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for all tags and branches
 
       - name: Read version from App.json
         id: read_version
         run: |
           version=$(jq -r '.version' AppSource/**/App.json | head -n 1)
-          echo "APP_VERSION=$version" >> $GITHUB_ENV
+          echo "APP_VERSION=${version}" >> $GITHUB_ENV
 
       - name: Set release inputs
         id: set_inputs
         run: |
-          echo "APP_VERSION=${{ github.event.inputs.appVersion || env.APP_VERSION }}" >> $GITHUB_ENV
+          APP_VERSION="${{ github.event.inputs.appVersion || env.APP_VERSION }}"
+          echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
+          
           if [[ -z "${{ github.event.inputs.tag }}" ]]; then
-            echo "RELEASE_TAG=v${{ env.APP_VERSION }}-${{ github.run_number }}" >> $GITHUB_ENV
+            RELEASE_TAG="v${APP_VERSION}-${{ github.run_number }}"
           else
-            echo "RELEASE_TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+            RELEASE_TAG="${{ github.event.inputs.tag }}"
           fi
-          echo "RELEASE_NOTES=${{ github.event.inputs.releaseNotes || 'Auto-generated release.' }}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          
+          RELEASE_NOTES="${{ github.event.inputs.releaseNotes || 'Auto-generated release.' }}"
+          echo "RELEASE_NOTES=${RELEASE_NOTES}" >> $GITHUB_ENV
 
       - name: Delete existing tag (if any)
         run: |
-          git push origin :refs/tags/${{ env.RELEASE_TAG }} || true
+          # Check if tag exists locally first
+          if git show-ref --tags "${{ env.RELEASE_TAG }}"; then
+            git tag -d "${{ env.RELEASE_TAG }}" || true
+          fi
+          # Check if tag exists remotely
+          if git ls-remote --tags origin "${{ env.RELEASE_TAG }}" | grep -q "${{ env.RELEASE_TAG }}"; then
+            git push origin ":refs/tags/${{ env.RELEASE_TAG }}" || true
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -51,5 +65,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Release ${{ env.APP_VERSION }}
           body: ${{ env.RELEASE_NOTES }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
