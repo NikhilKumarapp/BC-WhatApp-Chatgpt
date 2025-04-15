@@ -1,0 +1,46 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      appVersion:
+        description: 'App Version'
+        required: true
+      tag:
+        description: 'Tag'
+        required: true
+      releaseNotes:
+        description: 'Release Notes'
+        required: false
+
+  push:
+    paths:
+      - 'AppSource/**/App.json'  # Auto-trigger on App.json version file change
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Read version from App.json
+        id: read_version
+        run: |
+          version=$(jq -r '.version' AppSource/**/App.json | head -n 1)
+          echo "Version from App.json: $version"
+          echo "APP_VERSION=$version" >> $GITHUB_ENV
+
+      - name: Set release inputs (for workflow_dispatch)
+        id: set_inputs
+        run: |
+          echo "APP_VERSION=${{ github.event.inputs.appVersion || env.APP_VERSION }}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${{ github.event.inputs.tag || 'v' }}${{ env.APP_VERSION }}" >> $GITHUB_ENV
+          echo "RELEASE_NOTES=${{ github.event.inputs.releaseNotes || 'Auto-generated release.' }}" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.APP_VERSION }}
+          body: ${{ env.RELEASE_NOTES }}
