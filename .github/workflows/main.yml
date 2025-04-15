@@ -3,10 +3,7 @@ name: Create Release
 on:
   push:
     branches:
-      - main  # Change this if your default branch is different
-    # Uncomment the following if you only want to trigger on App.json changes
-    # paths:
-    #   - 'AppSource/**/App.json'
+      - main
 
   workflow_dispatch:
     inputs:
@@ -31,15 +28,13 @@ jobs:
         id: read_version
         run: |
           version=$(jq -r '.version' AppSource/**/App.json | head -n 1)
-          echo "Version from App.json: $version"
           echo "APP_VERSION=$version" >> $GITHUB_ENV
 
-      - name: Set release inputs (for workflow_dispatch or push)
+      - name: Set release inputs
         id: set_inputs
         run: |
-          # If manual inputs exist, use them; otherwise fall back to auto-detected version
           echo "APP_VERSION=${{ github.event.inputs.appVersion || env.APP_VERSION }}" >> $GITHUB_ENV
-          echo "RELEASE_TAG=${{ github.event.inputs.tag || format('v{0}', env.APP_VERSION) }}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${{ github.event.inputs.tag || format('v{0}-{1}', env.APP_VERSION, github.run_number) }}" >> $GITHUB_ENV
           echo "RELEASE_NOTES=${{ github.event.inputs.releaseNotes || 'Auto-generated release.' }}" >> $GITHUB_ENV
 
       - name: Create Release
@@ -48,3 +43,5 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Release ${{ env.APP_VERSION }}
           body: ${{ env.RELEASE_NOTES }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
