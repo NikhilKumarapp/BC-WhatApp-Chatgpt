@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
     inputs:
       appVersion:
@@ -24,20 +23,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Fetch all history for all tags and branches
+          fetch-depth: 0  # Required to fetch all history for tags
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
 
       - name: Read version from App.json
         id: read_version
         run: |
+          # Verify App.json exists
+          if [ ! -f "AppSource/**/App.json" ]; then
+            echo "::error::App.json file not found!"
+            exit 1
+          fi
+          
           version=$(jq -r '.version' AppSource/**/App.json | head -n 1)
-          echo "APP_VERSION=${version}" >> $GITHUB_ENV
+          if [ -z "$version" ]; then
+            echo "::error::Could not read version from App.json"
+            exit 1
+          fi
+          echo "APP_VERSION=$version" >> $GITHUB_ENV
+          echo "Version read successfully: $version"
 
       - name: Set release inputs
         id: set_inputs
         run: |
+          # Use input version or fallback to App.json version
           APP_VERSION="${{ github.event.inputs.appVersion || env.APP_VERSION }}"
           echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
           
+          # Generate tag name
           if [[ -z "${{ github.event.inputs.tag }}" ]]; then
             RELEASE_TAG="v${APP_VERSION}-${{ github.run_number }}"
           else
@@ -45,27 +62,57 @@ jobs:
           fi
           echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
           
+          # Set release notes
           RELEASE_NOTES="${{ github.event.inputs.releaseNotes || 'Auto-generated release.' }}"
           echo "RELEASE_NOTES=${RELEASE_NOTES}" >> $GITHUB_ENV
+          
+          echo "Using tag: ${RELEASE_TAG}"
+          echo "Release notes: ${RELEASE_NOTES}"
+
+      - name: Verify GitHub Token
+        run: |
+          if [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "::error::GITHUB_TOKEN is not available"
+            exit 1
+          fi
+          echo "GitHub token is available (first 4 chars: ${GITHUB_TOKEN:0:4}...)"
 
       - name: Delete existing tag (if any)
         run: |
-          # Check if tag exists locally first
-          if git show-ref --tags "${{ env.RELEASE_TAG }}"; then
-            git tag -d "${{ env.RELEASE_TAG }}" || true
-          fi
           # Check if tag exists remotely
-          if git ls-remote --tags origin "${{ env.RELEASE_TAG }}" | grep -q "${{ env.RELEASE_TAG }}"; then
-            git push origin ":refs/tags/${{ env.RELEASE_TAG }}" || true
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ env.RELEASE_TAG }}" >/dev/null 2>&1; then
+            echo "Tag ${{ env.RELEASE_TAG }} exists, deleting..."
+            git tag -d "${{ env.RELEASE_TAG }}" || true
+            git push origin ":refs/tags/${{ env.RELEASE_TAG }}" || \
+              echo "::warning::Failed to delete remote tag (might not exist)"
+          else
+            echo "Tag ${{ env.RELEASE_TAG }} does not exist, nothing to delete"
           fi
 
+      - name: Debug outputs
+        run: |
+          echo "APP_VERSION: ${{ env.APP_VERSION }}"
+          echo "RELEASE_TAG: ${{ env.RELEASE_TAG }}"
+          echo "RELEASE_NOTES: ${{ env.RELEASE_NOTES }}"
+          echo "GITHUB_REF: $GITHUB_REF"
+          echo "GITHUB_SHA: $GITHUB_SHA"
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Release ${{ env.APP_VERSION }}
           body: ${{ env.RELEASE_NOTES }}
           draft: false
           prerelease: false
+          generate_release_notes: false
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify release creation
+        if: steps.create_release.outputs.result != 'success'
+        run: |
+          echo "::error::Release creation failed!"
+          exit 1
