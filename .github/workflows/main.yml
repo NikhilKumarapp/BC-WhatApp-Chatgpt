@@ -28,10 +28,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup AL Environment
-        uses: microsoft/AL-Go-Actions/setup@v1
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v3
         with:
-          version: 'latest'
+          dotnet-version: '6.0.x'
+
+      - name: Install AL Compiler
+        run: |
+          dotnet tool install --global alc --version 8.0.0
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
 
       - name: Validate App.json
         id: validate_app
@@ -102,6 +107,18 @@ jobs:
         run: |
           echo "Building AL application..."
           alc /project:${{ github.workspace }} /packagecachepath:${{ github.workspace }}/.alpackages
+          echo "Build completed successfully"
+
+      - name: Find App File
+        id: find_app
+        run: |
+          APP_PATH=$(find ${{ github.workspace }} -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No .app file found after build"
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+          echo "Found app file at: $APP_PATH"
 
       - name: Create GitHub Release
         id: create_release
@@ -121,7 +138,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ github.workspace }}/**/*.app
+          asset_path: ${{ env.APP_PATH }}
           asset_name: "BusinessCentralApp_${{ env.APP_VERSION }}.app"
           asset_content_type: application/octet-stream
 
